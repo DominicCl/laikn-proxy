@@ -86,6 +86,10 @@ var globalRegions = []Region{
 	{"asia-northeast1", "Tokyo (JP)", "35.67", "139.65", 500, "gas"},
 	{"australia-southeast1", "Sydney (AU)", "-33.86", "151.20", 600, "solar"},
 	{"asia-south1", "Mumbai (IN)", "19.07", "72.87", 700, "coal"},
+	// --- NEW REGIONS ---
+	{"europe-southwest1", "Madrid (ES)", "40.41", "-3.70", 200, "solar"},
+	{"europe-north2", "Stockholm (SE)", "59.32", "18.06", 30, "hydro"},
+	{"asia-southeast1", "Singapore (SG)", "1.35", "103.82", 450, "gas"},
 }
 
 // ========== THE INFERENCE ENGINE ==========
