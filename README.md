@@ -1,3 +1,5 @@
+
+
 # Laikn: Carbon-Aware VS Code Router
 
 Laikn is an intelligent, carbon-aware developer tool built to dynamically route workloads and optimize cloud energy efficiency across global server regions in real-time. By coupling a VS Code extension, a high-performance Go proxy, and a Ruby on Rails analytics dashboard, Laikn bridges the gap between infrastructure deployment and environmental impact.
@@ -20,11 +22,7 @@ When a routing request is triggered, the Go microservice evaluates real-time gri
 3. **Temporal Shifting & Selection:** Identifies the absolute greenest immediate region or evaluates if waiting a specific number of hours yields a better carbon score via temporal shifting.
 
 ## Demo Video
-
-
-
-
-
+https://youtu.be/WjGx3Y-kpQ4
 ## Installation
 
 Navigate to the VS Code Extension Marketplace, search for "Laikn", and click Install.
