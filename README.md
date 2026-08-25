@@ -22,7 +22,9 @@ When a routing request is triggered, the Go microservice evaluates real-time gri
 3. **Temporal Shifting & Selection:** Identifies the absolute greenest immediate region or evaluates if waiting a specific number of hours yields a better carbon score via temporal shifting.
 
 ## Demo Video
-https://youtu.be/WjGx3Y-kpQ4
+
+[![Laikn Demo](https://img.youtube.com/vi/WjGx3Y-kpQ4/0.jpg)](https://www.youtube.com/watch?v=WjGx3Y-kpQ4)
+
 ## Installation
 
 Navigate to the VS Code Extension Marketplace, search for "Laikn", and click Install.
