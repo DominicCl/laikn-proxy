@@ -19,11 +19,12 @@ When a routing request is triggered, the Go microservice evaluates real-time gri
    * **Cooling Overhead:** Dynamically scales datacenter Power Usage Effectiveness (PUE) penalties based on how much ambient temperatures exceed 25°C.
 3. **Temporal Shifting & Selection:** Identifies the absolute greenest immediate region or evaluates if waiting a specific number of hours yields a better carbon score via temporal shifting.
 
-## Quick Start & Setup
+## Demo Video
 
-### 1. Backend Proxy (Go)
-Navigate to the proxy directory, install dependencies, and run your local server or build your container for Google Cloud Run:
-```bash
-go mod init laikn-proxy
-go build -o main main.go
-./main
+
+
+
+
+## Installation
+
+Navigate to the VS Code Extension Marketplace, search for "Laikn", and click Install.
