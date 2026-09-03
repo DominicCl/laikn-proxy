@@ -34,8 +34,9 @@ type OpenMeteoResponse struct {
 		WeatherCode int     `json:"weathercode"`
 	} `json:"current_weather"`
 	Hourly struct {
-		Windspeed80m    []float64 `json:"windspeed_80m"`    // km/h at 80m hub height, 24 values (one per hour)
-		DirectRadiation []float64 `json:"direct_radiation"` // W/m², 24 values (one per hour)
+		Temperature2m   []float64 `json:"temperature_2m"`
+		Windspeed80m    []float64 `json:"windspeed_80m"`
+		DirectRadiation []float64 `json:"direct_radiation"`
 	} `json:"hourly"`
 }
 
@@ -67,9 +68,11 @@ type Region struct {
 }
 
 type RegionScore struct {
-	Name     string
-	Score    int
-	Analysis string
+	Name        string
+	Score       int
+	Analysis    string
+	FutureScore int
+	WaitHours   int
 }
 
 // globalRegions — UNCHANGED
@@ -94,6 +97,50 @@ var globalRegions = []Region{
 
 // ========== THE INFERENCE ENGINE ==========
 
+func calculateScoreForHour(r Region, temp, windspeed80m, directRadiation float64, hourUTC int) (int, string) {
+	carbon := r.BaseLoad
+	analysis := fmt.Sprintf("[%s]: %.1f°C", r.Name, temp)
+
+	if r.Type == "wind" {
+		windMs := windspeed80m / 3.6
+		if windMs >= 3.0 && windMs <= 25.0 {
+			reduction := int(math.Pow(windMs, 3) * 0.04)
+			carbon -= reduction
+			analysis += fmt.Sprintf(", Wind %.1fm/s (-%dg)", windMs, reduction)
+		} else if windMs > 25.0 {
+			carbon += 50
+			analysis += fmt.Sprintf(", Wind %.1fm/s (cut-out +50g)", windMs)
+		}
+	}
+
+	if r.Type == "solar" {
+		solarFraction := math.Min(1.0, directRadiation/900.0)
+		solarReduction := int(solarFraction * 250)
+		carbon -= solarReduction
+		analysis += fmt.Sprintf(", Solar %.0fW/m² (-%dg)", directRadiation, solarReduction)
+	}
+
+	tempOverThreshold := math.Max(0, temp-25.0)
+	puePenalty := int(tempOverThreshold * 0.01 * float64(r.BaseLoad))
+	if puePenalty > 0 {
+		carbon += puePenalty
+		analysis += fmt.Sprintf(", Cooling overhead +%dg", puePenalty)
+	}
+
+	currentMonth := time.Now().UTC().Month()
+	isSpring := currentMonth >= 3 && currentMonth <= 5
+	isMidday := hourUTC >= 10 && hourUTC <= 15
+	if r.Type == "solar" && isSpring && isMidday && directRadiation > 630 {
+		carbon = 15
+		analysis += ", ~Curtailment window"
+	}
+
+	if carbon < 15 {
+		carbon = 15
+	}
+	return carbon, analysis
+}
+
 // calculateRegionCarbon — FULLY UPDATED
 // This is the only function that changed. Everything else (handler, main, Firestore) is identical.
 func calculateRegionCarbon(r Region, wg *sync.WaitGroup, results chan<- RegionScore) {
@@ -112,14 +159,14 @@ func calculateRegionCarbon(r Region, wg *sync.WaitGroup, results chan<- RegionSc
 	// -----------------------------------------------------------------------
 	// building a string for the editable API endpoint according to the latitude and longitude of the region
 	url := fmt.Sprintf(
-		"https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current_weather=true&hourly=windspeed_80m,direct_radiation&forecast_days=1",
+		"https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current_weather=true&hourly=temperature_2m,windspeed_80m,direct_radiation&forecast_days=2",
 		r.Lat, r.Lon,
 	)
 
 	// actually sendding the request to open-meteo
 	resp, err := client.Get(url)
 	if err != nil { // if there is an error (error-handling)
-		results <- RegionScore{r.ID, 999, "API Error"}
+		results <- RegionScore{r.ID, 999, "API Error", 999, 0} // <--- ADDED 999, 0
 		return
 	}
 	// close the stream we read the response from after storing the response in resp
@@ -128,7 +175,7 @@ func calculateRegionCarbon(r Region, wg *sync.WaitGroup, results chan<- RegionSc
 	// here we parse the data
 	var data OpenMeteoResponse // empty Go structure to hold the weather data
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		results <- RegionScore{r.ID, 999, "JSON Error"}
+		results <- RegionScore{r.ID, 999, "JSON Error", 999, 0} // <--- ADDED 999, 0
 		return
 	}
 
@@ -140,230 +187,39 @@ func calculateRegionCarbon(r Region, wg *sync.WaitGroup, results chan<- RegionSc
 	// -----------------------------------------------------------------------
 	currentHour := time.Now().UTC().Hour()
 
-	// Safely read the hourly values at the current hour.
-	// If for any reason the arrays are shorter than expected, we default to 0.
-	var windspeed80m float64    // wind speed in km/h at 80m hub height
-	var directRadiation float64 // solar energy in W/m² hitting the ground right now
-
+	var windspeed80m, directRadiation, currTemp float64
 	if currentHour < len(data.Hourly.Windspeed80m) {
-		windspeed80m = data.Hourly.Windspeed80m[currentHour] // read the current hour windspeed at 80m high
+		windspeed80m = data.Hourly.Windspeed80m[currentHour]
 	}
 	if currentHour < len(data.Hourly.DirectRadiation) {
-		directRadiation = data.Hourly.DirectRadiation[currentHour] // read the current hour radiation
+		directRadiation = data.Hourly.DirectRadiation[currentHour]
+	}
+	if currentHour < len(data.Hourly.Temperature2m) {
+		currTemp = data.Hourly.Temperature2m[currentHour]
+	} else {
+		currTemp = data.CurrentWeather.Temperature
 	}
 
-	temp := data.CurrentWeather.Temperature // still from current_weather, unchanged
+	immediateScore, analysis := calculateScoreForHour(r, currTemp, windspeed80m, directRadiation, currentHour)
 
-	// Start from base load and build up the analysis string
-	carbon := r.BaseLoad // the baseload is the average carbon dirtiness of that region's electricity grid, before any weather adjustments, the steady diry yet reliable energy hum, but will clean energy take over??? Let's see!
-	analysis := fmt.Sprintf("[%s]: %.1f°C", r.Name, temp)
+	bestFutureScore := immediateScore
+	optimalWait := 0
 
-	// =======================================================================
-	// FACTOR 1: WIND — CUBIC POWER FORMULA
-	// =======================================================================
-	//
-	// WHY CUBIC?
-	// Wind carries kinetic energy. For a "parcel" of air with mass m moving at
-	// speed v, its kinetic energy is: KE = ½ × m × v²
-	//
-	// But m itself depends on v: faster wind pushes MORE air through the turbine
-	// blades per second. Specifically, mass flow rate = ρ × A × v
-	// (density × swept area × speed) where the density is the density of air depending
-	// on altitude, the swept area is the area of the circle the turbine covers with
-	// its blades, and the speed is the speed of the airflow.
-	//
-	// So total power = (mass per second) × (energy per kg) = (ρ × A × v) × (½ × v²)
-	//               = ½ × ρ × A × v³
-	//
-	// The v³ term is the key insight: doubling wind speed gives 2³ = 8× more power,
-	// not 2× as your old linear formula assumed.
-	//
-	// WHY 80m WIND?
-	// Your old code used windspeed from current_weather, which is measured at 10m
-	// above ground. Real turbines have hub heights of 80–120m. Wind speed increases
-	// with altitude (less friction from the ground), so 10m readings substantially
-	// underestimate what turbines actually experience.
-	// Open-Meteo gives us windspeed_80m for free — much more accurate.
-	//
-	// THE FORMULA IN CODE:
-	// windMs = speed in m/s (convert from km/h by dividing by 3.6)
-	// cubedWind = v³ (the physics)
-	// * 0.04 is a normalization constant tuned to our gCO2/kWh scale for determining
-	// the best region to choose.
-	//   At 10 m/s: 1000 × 0.04 = 40g reduction  (strong wind)
-	//   At  5 m/s:  125 × 0.04 =  5g reduction  (light wind — 8× less, not 2×)
-	//   At  3 m/s:   27 × 0.04 =  1g reduction  (below cut-in, barely anything)
-	//
-	// WIND TURBINE CUT-IN / CUT-OUT:
-	// Real turbines don't generate below ~3 m/s (cut-in speed) and shut off
-	// above ~25 m/s (cut-out) to protect the blades. We model both.
-	// So the only window where a wind turbine actually produces electricity is between
-	// 3 and 25 m/s.
-	// =======================================================================
-	if r.Type == "wind" { // if the region uses wind energy
-		windMs := windspeed80m / 3.6 // convert km/h → m/s
+	// Look ahead 24 hours instead of 12
+	for i := 1; i <= 24; i++ {
+		idx := currentHour + i
+		if idx < len(data.Hourly.Temperature2m) && idx < len(data.Hourly.Windspeed80m) && idx < len(data.Hourly.DirectRadiation) {
+			fScore, _ := calculateScoreForHour(r, data.Hourly.Temperature2m[idx], data.Hourly.Windspeed80m[idx], data.Hourly.DirectRadiation[idx], (currentHour+i)%24)
 
-		if windMs >= 3.0 && windMs <= 25.0 { // checking if it below cut-out (won't make turbine spin) or above cut-in (over-spin)
-			// Normal operating range: apply cubic formula
-			cubedWind := math.Pow(windMs, 3)
-			reduction := int(cubedWind * 0.04) // reduction to fit on our point scale
-			carbon -= reduction
-			analysis += fmt.Sprintf(", Wind %.1fm/s @80m (cubic reduction: -%dg)", windMs, reduction) // added to the tempature analysis
-		} else if windMs > 25.0 {
-			// Above cut-out speed: turbines shut down to protect blades.
-			// No generation at all — and ironically the grid may need to
-			// draw from fossil sources to compensate.
-			carbon += 50 // sort of a scramble penalty
-			analysis += fmt.Sprintf(", Wind %.1fm/s @80m (cut-out, turbines offline +50g)", windMs)
-		} else {
-			// Below cut-in speed (< 3 m/s): blades can't turn. No generation.
-			analysis += fmt.Sprintf(", Wind %.1fm/s @80m (below cut-in, no generation)", windMs)
+			// If waiting drops emissions even slightly, save it
+			if fScore < bestFutureScore {
+				bestFutureScore = fScore
+				optimalWait = i
+			}
 		}
 	}
 
-	// =======================================================================
-	// FACTOR 2: SOLAR — DIRECT RADIATION IN W/m²
-	// =======================================================================
-	//
-	// WHY REPLACE WEATHER CODES?
-	// Your old code did: if weatherCode <= 2 → apply flat -200 bonus, else +50 penalty.
-	// Problems:
-	//   1. Binary — a partly cloudy noon in Sydney and a clear midnight in Paris
-	//      both got the same "cloudy penalty." That's wrong.
-	//   2. No time-of-day awareness — solar bonuses were applied at 2am.
-	//   3. No gradation — 600 W/m² (partly cloudy noon) vs 50 W/m² (thick overcast)
-	//      got treated identically.
-	//
-	// WHAT IS direct_radiation?
-	// It's the instantaneous solar energy striking a flat horizontal surface,
-	// measured in Watts per square metre (W/m²).
-	//   0 W/m²   = nighttime or completely overcast (no solar generation)
-	//   100 W/m² = heavily overcast (panels at ~11% of peak)
-	//   400 W/m² = partly cloudy (panels at ~44% of peak)
-	//   900 W/m² = clear sky at solar noon (near peak — this is our reference max)
-	// 	You want to know "how hard are the solar panels working right now?" as a simple number between 0 and 1.
-	// That's all solarFraction is.
-	// You get there by dividing the current sunlight (whatever W/m² Open-Meteo gives you) by 900.
-	// Such is roughly the maximum sunlight you'd ever see on a clear noon. So:
-	// No sun at all → 0 / 900 = 0.0 (panels doing nothing)
-	// Half sun → 450 / 900 = 0.5 (panels at half capacity)
-	// Full sun → 900 / 900 = 1.0 (panels at maximum)
-	//
-	// THE FORMULA:
-	// solarFraction = directRadiation / 900.0
-	//   → gives a 0.0 to 1.0 multiplier of "how solar-productive is it right now"
-	//   → math.Min(1.0, ...) clamps it so values above 900 W/m² don't overshoot
-	//
-	// solarReduction = solarFraction × 250
-	//   → 250g is the maximum carbon reduction a solar region gets (at full sun) -> 250 is an educated guess
-	//   → at 450 W/m²: 0.5 × 250 = 125g reduction
-	//   → at 0 W/m² (night): 0 × 250 = 0g reduction — NO bonus at night, automatically
-	//
-	// This elegantly handles: nighttime (0), partial cloud (gradual), full sun (max).
-	// =======================================================================
-	if r.Type == "solar" {
-		solarFraction := math.Min(1.0, directRadiation/900.0) // overshooting 900 W/m² is unrealistic
-		solarReduction := int(solarFraction * 250)
-		carbon -= solarReduction // so a higher solar reduction the better
-		analysis += fmt.Sprintf(", Solar %.0fW/m² (fraction %.2f, -%dg)", directRadiation, solarFraction, solarReduction)
-	}
-
-	// =======================================================================
-	// FACTOR 3: PUE TEMPERATURE PENALTY
-	// =======================================================================
-	//
-	// WHAT IS PUE?
-	// PUE = Power Usage Effectiveness = Total facility power / IT equipment power
-	// A perfect PUE of 1.0 means 100% of electricity goes to compute.
-	// Industry average is ~1.5 — for every 1W of compute, 0.5W is wasted on
-	// cooling, lighting, power conversion overhead etc.
-	// Google's fleet average is ~1.1 (they're exceptional at this).
-	//
-	// WHY DOES TEMPERATURE MATTER?
-	// Cooling is the biggest overhead. When outside air is cold, datacenters use
-	// "free cooling" — basically just blowing outside air through the facility,
-	// no compressors needed. When it's hot outside, they need mechanical
-	// refrigeration, which is energy-hungry.
-	//
-	// THE MODEL:
-	// We use 25°C as the threshold where free cooling stops being viable.
-	// Above that, every additional degree forces more mechanical cooling.
-	// The penalty scales proportionally with BaseLoad because a dirtier grid
-	// amplifies the carbon cost of that extra cooling energy.
-	//
-	// math.Max(0, temp-25): if temp is 20°C, this is 0 (no penalty — free cooling works)
-	//                       if temp is 35°C, this is 10 (penalty applies)
-	// × 0.01: each degree above 25°C adds 1% overhead to the base carbon load
-	// × float64(r.BaseLoad): scales with grid dirtiness
-	//
-	// Example — Mumbai (BaseLoad=700) at 38°C:
-	//   (38 - 25) × 0.01 × 700 = 13 × 0.01 × 700 = 91g extra carbon
-	//   That's a meaningful penalty on top of an already-dirty grid.
-	//
-	// Example — Finland (BaseLoad=40) at 38°C (hypothetical):
-	//   13 × 0.01 × 40 = 5g extra — almost nothing, because the grid is so clean.
-	//   The PUE overhead barely matters when your electricity is nuclear.
-	// =======================================================================
-	// the following applies to all datacenters
-	tempOverThreshold := math.Max(0, temp-25.0)
-	puePenalty := int(tempOverThreshold * 0.01 * float64(r.BaseLoad))
-	if puePenalty > 0 {
-		carbon += puePenalty
-		analysis += fmt.Sprintf(", Cooling overhead +%dg (%.1f°C over threshold)", puePenalty, tempOverThreshold)
-	}
-
-	// =======================================================================
-	// FACTOR 4: CURTAILMENT PROXY
-	// =======================================================================
-	//
-	// WHAT IS CURTAILMENT?
-	// Curtailment happens when the grid is producing MORE renewable energy than
-	// it can use or transmit. The excess energy is simply "thrown away" —
-	// turbines are slowed down, solar farms are disconnected.
-	//
-	// WHY DOES THIS MATTER FOR CARBON?
-	// Counterintuitively, if your datacenter runs during a curtailment window,
-	// it is consuming electricity that would LITERALLY be wasted otherwise.
-	// The marginal carbon cost of that electricity is effectively zero — no extra
-	// fossil fuel is burned because of your workload. It's the greenest possible
-	// electricity.
-	//
-	// WHY CAN'T WE GET REAL CURTAILMENT DATA FOR FREE?
-	// ISOs (Independent System Operators) publish curtailment data with 30–90 day
-	// delays. There's no free real-time API for it globally.
-	//
-	// THE PROXY APPROACH:
-	// Research (NREL, UC Davis) shows curtailment is highly predictable from
-	// conditions we CAN observe for free:
-	//   - Season: Spring (March–May) is peak curtailment season. Solar output is
-	//     high but heating demand has dropped — the grid is often oversupplied.
-	//   - Time of day: Midday (10am–3pm) is when solar peaks.
-	//   - Irradiance: If direct_radiation > 630 W/m² (70% of max), solar farms
-	//     are near full output — oversupply risk is high.
-	//
-	// When ALL THREE conditions are true for a solar region:
-	//   → we set carbon to a floor of 15g (near-zero marginal emissions)
-	//   → this correctly rewards running workloads during likely-curtailment windows
-	//
-	// We intentionally use a floor of 15 (not 0) to be conservative — we're
-	// inferring curtailment, not measuring it directly.
-	// =======================================================================
-	currentMonth := time.Now().UTC().Month()
-	isSpring := currentMonth >= 3 && currentMonth <= 5
-	isMidday := currentHour >= 10 && currentHour <= 15
-	highSolar := directRadiation > 630 // 70% of 900 W/m² max = likely near peak output
-
-	if r.Type == "solar" && isSpring && isMidday && highSolar { // only check for solar regions
-		carbon = 15
-		analysis += ", ~Curtailment window (near-zero marginal emissions)"
-	}
-
-	// Minimum carbon floor — even nuclear has some lifecycle emissions
-	if carbon < 15 {
-		carbon = 15
-	}
-
-	results <- RegionScore{r.ID, carbon, analysis}
+	results <- RegionScore{r.ID, immediateScore, analysis, bestFutureScore, optimalWait}
 }
 
 // ========== HANDLER & MAIN  ==========
@@ -433,8 +289,31 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// give the suggestion and full analysis
-	suggestionText := fmt.Sprintf("🌿 You should run your tasks in %s (%s) for the lowest carbon impact!", winner.Name, winnerID)
+	var bestFuture RegionScore
+	hasFuture := false
+	for _, s := range scores {
+		// Check if the future score is strictly less than the current winner
+		if s.WaitHours > 0 && s.FutureScore < scores[0].Score {
+			if !hasFuture || s.FutureScore < bestFuture.FutureScore {
+				bestFuture = s
+				hasFuture = true
+			}
+		}
+	}
+
+	suggestionText := fmt.Sprintf("You should run your tasks in %s (%s) for the lowest carbon impact!", winner.Name, winnerID)
+
+	if hasFuture {
+		var futureWinner Region
+		for _, reg := range globalRegions {
+			if reg.ID == bestFuture.Name {
+				futureWinner = reg
+			}
+		}
+		suggestionText += fmt.Sprintf(" Or wait %d hours and route to %s (%s) to drop emissions down to %dg!", bestFuture.WaitHours, futureWinner.Name, bestFuture.Name, bestFuture.FutureScore)
+	} else {
+		suggestionText += " Even with temporal shifting considered, this is the best option right now."
+	}
 
 	fullAnalysis := "🏆 WINNER: " + winner.Name + "\n"
 	for _, s := range scores {
