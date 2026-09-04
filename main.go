@@ -47,13 +47,21 @@ type RequestData struct {
 }
 
 type ResponseData struct {
-	Result          string `json:"result"`
-	Region          string `json:"region"`
-	CarbonIntensity int    `json:"carbon_intensity"`
-	Co2Saved        int    `json:"co2_saved"`
-	Analysis        string `json:"analysis"`
-	Suggestion      string `json:"suggestion"`
-	DashboardURL    string `json:"dashboard_url"`
+	Result           string `json:"result"`
+	Region           string `json:"region"`
+	CarbonIntensity  int    `json:"carbon_intensity"`
+	Co2Saved         int    `json:"co2_saved"`
+	Analysis         string `json:"analysis"`
+	Suggestion       string `json:"suggestion"`
+	DashboardURL     string `json:"dashboard_url"`
+	BestFutureRegion string `json:"best_future_region"` // NEW
+	OptimalWait      int    `json:"optimal_wait"`       // NEW
+}
+
+type DecisionData struct {
+	UserID       string `json:"user_id"`
+	Decision     string `json:"decision"`
+	ChosenOption string `json:"chosen_option"`
 }
 
 var projectID = "loyal-theater-484704-g3"
@@ -336,22 +344,59 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	resp := ResponseData{
-		Result:          "Optimal Route Found",
-		Region:          winner.Name,
-		CarbonIntensity: scores[0].Score,
-		Co2Saved:        savings,
-		Analysis:        fullAnalysis,
-		Suggestion:      suggestionText,
-		DashboardURL:    "https://laikn-dashboard-819883251321.us-central1.run.app",
+	var futureWinnerName string
+	if hasFuture {
+		for _, reg := range globalRegions {
+			if reg.ID == bestFuture.Name {
+				futureWinnerName = reg.Name
+			}
+		}
 	}
 
+	resp := ResponseData{
+		Result:           "Optimal Route Found",
+		Region:           winner.Name,
+		CarbonIntensity:  scores[0].Score,
+		Co2Saved:         savings,
+		Analysis:         fullAnalysis,
+		Suggestion:       suggestionText,
+		DashboardURL:     "https://laikn-dashboard-819883251321.us-central1.run.app",
+		BestFutureRegion: futureWinnerName,     // <--- Added this
+		OptimalWait:      bestFuture.WaitHours, // <--- Added this
+	}
 	w.Header().Set("Content-Type", "application/json") // hey, im sending a JSON
 	json.NewEncoder(w).Encode(resp)                    // send it
 }
 
+func decisionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == http.MethodOptions {
+		return
+	}
+
+	var d DecisionData
+	json.NewDecoder(r.Body).Decode(&d)
+
+	ctx := context.Background()
+	dbClient, err := firestore.NewClient(ctx, projectID)
+	if err == nil {
+		defer dbClient.Close()
+		dbClient.Collection("decisions").Add(ctx, map[string]interface{}{
+			"user_id":       d.UserID,
+			"decision":      d.Decision,
+			"chosen_option": d.ChosenOption,
+			"timestamp":     firestore.ServerTimestamp,
+		})
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func main() {
 	http.HandleFunc("/", handler)
+	http.HandleFunc("/decision", decisionHandler)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
