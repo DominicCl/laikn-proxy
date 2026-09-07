@@ -4,6 +4,11 @@
 
 Laikn is an intelligent, carbon-aware developer tool built to dynamically route workloads and optimize cloud energy efficiency across global server regions in real-time. By coupling a VS Code extension, a high-performance Go proxy, and a Ruby on Rails analytics dashboard, Laikn bridges the gap between infrastructure deployment and environmental impact.
 
+## New Feature: Temporal Shifting (v0.0.6)
+Laikn now supports **Temporal Shifting**! If grid carbon intensity is currently high, Laikn will calculate the optimal time to delay your workload. 
+
+Instead of running immediately, you can choose to wait, and Laikn will set an internal alarm. When the grid is cleaner (e.g., in 4 hours), the extension will notify you that it is the optimal time to execute your task, maximizing your carbon savings.
+
 ## Technical Architecture
 
 * **Client Interface (VS Code Extension):** Built using TypeScript and the VS Code Extension API. It manages local state via `globalState` for region preferences, features a custom multi-select quick pick supporting up to 16 global nodes, and formats live telemetry directly into a dedicated output channel.
