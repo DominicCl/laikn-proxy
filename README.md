@@ -1,4 +1,4 @@
-
+# Download here: https://marketplace.visualstudio.com/search?term=laikn&target=VSCode&category=All%20categories&sortBy=Relevance
 
 # Laikn: Carbon-Aware VS Code Router
 
