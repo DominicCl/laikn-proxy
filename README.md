@@ -30,6 +30,21 @@ When a routing request is triggered, the Go microservice evaluates real-time gri
 
 [![Laikn Demo](https://img.youtube.com/vi/WjGx3Y-kpQ4/0.jpg)](https://www.youtube.com/watch?v=WjGx3Y-kpQ4)
 
+## Tech Stack & Architecture
+
+**The Client (VS Code Extension)**
+* ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat-square&logo=typescript&logoColor=white) 
+* ![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat-square&logo=nodedotjs&logoColor=white)
+
+**The Brain (Microservice Proxy)**
+* ![Go](https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white)
+* ![Google Cloud Run](https://img.shields.io/badge/Cloud_Run-4285F4?style=flat-square&logo=googlecloud&logoColor=white)
+
+**The Dashboard (Analytics & UI)**
+* ![Ruby on Rails](https://img.shields.io/badge/Ruby_on_Rails-CC0000?style=flat-square&logo=rubyonrails&logoColor=white)
+* ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat-square&logo=tailwind-css&logoColor=white)
+* ![Firebase](https://img.shields.io/badge/Firestore-FFCA28?style=flat-square&logo=firebase&logoColor=black)
+
 ## Installation
 
 Navigate to the VS Code Extension Marketplace, search for "Laikn", and click Install.
