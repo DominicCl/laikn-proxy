@@ -11,7 +11,7 @@ Instead of running immediately, you can choose to wait, and Laikn will set an in
 
 ## Technical Architecture
 
-* **Client Interface (VS Code Extension):** Built using TypeScript and the VS Code Extension API. It manages local state via `globalState` for region preferences, features a custom multi-select quick pick supporting up to 16 global nodes, and formats live telemetry directly into a dedicated output channel.
+* **Client Interface (VS Code Extension):** Built using TypeScript and the VS Code Extension API. It manages local state via `globalState` for region preferences, features a custom multi-select quick pick supporting 17 global nodes, and formats live telemetry directly into a dedicated output channel.
 * **Core Backend Proxy (Go):** Engineered in Go utilizing concurrent worker routines (`sync.WaitGroup` and buffered channels) to query the Open-Meteo API simultaneously across all target regions without blocking. It processes live meteorological metrics, including 80-meter wind speeds, direct solar radiation, and ambient temperatures, applying custom physics formulas for cubic wind turbine power curves, cut-off thresholds, solar curtailment windows, and datacenter PUE cooling overhead penalties.
 * **Analytics Dashboard (Ruby on Rails):** A server-side Rails application utilizing Tailwind CSS and Google Cloud Firestore. It aggregates telemetry and user routing history, serving live insights and metric tracking.
 

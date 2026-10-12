@@ -87,7 +87,9 @@ type RegionScore struct {
 var globalRegions = []Region{
 	{"us-central1", "Iowa (US)", "41.26", "-95.86", 550, "wind"},
 	{"us-west1", "Oregon (US)", "45.63", "-121.20", 150, "hydro"},
+	{"us-west2", "Los Angeles (US)", "34.05", "-118.24", 300, "solar"},
 	{"us-east4", "Virginia (US)", "39.04", "-77.48", 450, "mixed"},
+	{"northamerica-northeast1", "Montréal (CA)", "45.50", "-73.57", 40, "hydro"},
 	{"southamerica-east1", "São Paulo (BR)", "-23.55", "-46.63", 100, "hydro"},
 	{"europe-west9", "Paris (FR)", "48.85", "2.35", 50, "nuclear"},
 	{"europe-west1", "St. Ghislain (BE)", "50.45", "3.82", 200, "mixed"},
